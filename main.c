@@ -1,6 +1,7 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define INDEX_BLOCK_SIZE 54
@@ -110,19 +111,10 @@ void writeRowCount(uint32_t newRowCount) {
   fwrite(&newRowCount, sizeof(newRowCount), 1, fp);
 }
 
-int addToTable(char *tableName, char *key, char *value) {
+char *findInTable(char *tableName, char *key) {
   int out = 0;
 
   char d_filePath[25 + strlen(tableName) + 5 + 6], i_filePath[26 + strlen(tableName) + 5 + 6];
-
-  /*
-    1 byte for key size
-    4 bytes for value size
-    ? bytes for key
-    ? bytes for value
-    = tota 1 + 4 + ? + ?
-  */
-  uint8_t d_block[1 + 4 + strlen(key) + strlen(value)];
 
   if (strlen(key) > 50) {
     printf("Key cannot excede 50 characters.\n");
@@ -138,25 +130,130 @@ int addToTable(char *tableName, char *key, char *value) {
   strcat(i_filePath, tableName);
   strcat(i_filePath, ".tydb");
 
-  uint32_t dataSize = strlen(key) + strlen(value);
+  fp = fopen(i_filePath, "rb+	");
 
-  // size of key
-  d_block[0] = (uint8_t)strlen(key);
+  if (fp == NULL) {
+    printf("Table '%s' does not exist. To create a table use:\n\n    tinydb create NAME\n", tableName);
+    out = 0;
+    goto ret;
+  }
+
+  /*
+    50 bytes for key
+    4 bytes for locator
+
+    = total of 54 bytes/block
+  */
+
+  uint32_t rowCount, newRowCount;
+  fread(&rowCount, sizeof(rowCount), 1, fp);
+  newRowCount = rowCount + 1;
+
+  uint8_t k_block[54];
+  for (int i = 0; i < strlen(key); i++) {
+    k_block[i] = key[i];
+  }
+  for (int i = 0; i < 50 - strlen(key); i++) {
+    // TODO bad implementation to end key with null bytes
+    k_block[i + strlen(key)] = 0;
+  }
+
+  double indexPosition = findIndex(k_block, rowCount);
+
+  fclose(fp);
+
+  double nzero = -0.0;
+
+  if (indexPosition < 0 || (memcmp(&nzero, &indexPosition, sizeof(nzero)) == 0)) {
+    uint32_t pos;
+    pos |= (uint32_t)c_key[50] << 24;
+    pos |= (uint32_t)c_key[51] << 16;
+    pos |= (uint32_t)c_key[52] << 8;
+    pos |= (uint32_t)c_key[53];
+
+    // printf("%d\n", pos);
+    fp = fopen(d_filePath, "rb+	");
+
+    if (fp == NULL) {
+      printf("Table '%s' does not exist. To create a table use:\n\n    tinydb create NAME\n", tableName);
+      out = 0;
+      goto ret;
+    }
+
+    fseek(fp, pos, SEEK_SET);
+    uint8_t d_a_size[4];
+    fread(&d_a_size, 4, 1, fp);
+
+    uint32_t d_size;
+    d_size |= (uint32_t)d_a_size[0] << 24;
+    d_size |= (uint32_t)d_a_size[1] << 16;
+    d_size |= (uint32_t)d_a_size[2] << 8;
+    d_size |= (uint32_t)d_a_size[3];
+
+    char *data = malloc(d_size);
+    fread(data, d_size, 1, fp);
+
+    fclose(fp);
+
+    return (data);
+
+  } else {
+    printf("Key does not exist.\n");
+    out = 2;
+    goto ret;
+  }
+
+ret:
+  if (out == 2) {
+    out = 0;
+    fclose(fp);
+  } else if (out == 3) {
+    out = 1;
+    fclose(fp);
+  }
+
+  return ("hello");
+}
+
+int addToTable(char *tableName, char *key, char *value) {
+  int out = 1;
+
+  char d_filePath[25 + strlen(tableName) + 5 + 6], i_filePath[26 + strlen(tableName) + 5 + 6];
+
+  /*
+    4 bytes for value size
+    ? bytes for value
+    = tota 4 + ?
+  */
+  uint8_t d_block[4 + strlen(value)];
+
+  if (strlen(key) > 50) {
+    printf("Key cannot excede 50 characters.\n");
+    out = 0;
+    goto ret;
+  }
+
+  strcpy(d_filePath, "/var/lib/tinydb/d_");
+  strcat(d_filePath, tableName);
+  strcat(d_filePath, ".tydb");
+
+  strcpy(i_filePath, "/var/lib/tinydb/i_");
+  strcat(i_filePath, tableName);
+  strcat(i_filePath, ".tydb");
+
+  uint32_t dataSize = strlen(value);
+
+  // printf("dataSize: %d\n", dataSize);
 
   // size of value
-  d_block[1] = dataSize << 24;
-  d_block[2] = dataSize << 16;
-  d_block[3] = dataSize << 8;
-  d_block[4] = dataSize;
-
-  // key
-  for (int i = 0; i < strlen(key); i++) {
-    d_block[i + 4] = key[i];
-  }
+  d_block[0] = dataSize << 24;
+  d_block[1] = dataSize << 16;
+  d_block[2] = dataSize << 8;
+  d_block[3] = dataSize;
 
   // value
   for (int i = 0; i < strlen(value); i++) {
-    d_block[i + 4 + strlen(key)] = value[i];
+    d_block[4 + i] = value[i];
   }
 
   fp = fopen(d_filePath, "rb+	");
@@ -202,10 +299,16 @@ int addToTable(char *tableName, char *key, char *value) {
     k_block[i + strlen(key)] = 0;
   }
 
-  k_block[50] = d_positoin << 24;
-  k_block[51] = d_positoin << 16;
-  k_block[52] = d_positoin << 8;
-  k_block[53] = d_positoin;
+  k_block[50] = d_positoin >> 24;
+  k_block[51] = d_positoin >> 16;
+  k_block[52] = d_positoin >> 8;
+  k_block[53] = d_positoin >> 0;
+
+  uint32_t pos;
+  pos |= (uint32_t)k_block[50] << 24;
+  pos |= (uint32_t)k_block[51] << 16;
+  pos |= (uint32_t)k_block[52] << 8;
+  pos |= (uint32_t)k_block[53];
 
   // just insert if first entry
   if (rowCount == 0) {
@@ -282,7 +385,7 @@ ret:
   return (out);
 }
 
-int main(int argc, char *argv[]) {
+char *main(int argc, char *argv[]) {
   int out = 0;
   if (!checkParams(argc, argv)) {
     out = 1;
@@ -321,6 +424,28 @@ int main(int argc, char *argv[]) {
       }
 
       i += 3;
+    } else if (strcmp(argv[i], "find") == 0) {
+      if (argc - 1 < i + 1) {
+        printf("You need to pass the name of your table.\n\n    tinydb add NAME key value\n\n\n");
+        out = 1;
+        goto end;
+      }
+      if (argc - 1 < i + 2) {
+        printf("You need to pass the key you'd like to find in the database.\n\n    tinydb find name KEY\n\n\n");
+        out = 1;
+        goto end;
+      }
+
+      char *value = findInTable(argv[2], argv[3]);
+      // printf("%s\n", value);
+      return (value);
+      free(value);
+      // if (!) {
+      //   out = 2;
+      //   goto end;
+      // }
+
+      i += 2;
     } else {
       printf("Unknown argument: '%s'\n", argv[i]);
       out = 1;
@@ -331,5 +456,5 @@ int main(int argc, char *argv[]) {
 end:
   if (out == 1) printf("Use --h for help.\n");
 
-  return (out);
+  // return (out);
 }

@@ -1,8 +1,12 @@
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #define INDEX_BLOCK_SIZE 54
+
+const int MAX_CHUNK_SIZE = 75;
+
 FILE *fp;
 
 int checkParams(int argc, char *argv[]) {
@@ -176,13 +180,30 @@ int addToTable(char *tableName, char *key, char *value) {
     out = 2;
     goto ret;
   } else {
+    // TODO bug with order of c & d sometimes
     if (rowCount - (uint32_t)indexPosition > 0) {
-      fseek(fp, -INDEX_BLOCK_SIZE, SEEK_END);
+      // int moveCount = rowCount - (uint32_t)indexPosition;
+      uint8_t movable_sector[MAX_CHUNK_SIZE * INDEX_BLOCK_SIZE + 5];
 
-      for (int i = 0; i < rowCount - (uint32_t)indexPosition; i++) {
-        fread(&c_key, 54, 1, fp);
-        fwrite(&c_key, 54, 1, fp);
-        fseek(fp, -3 * INDEX_BLOCK_SIZE, SEEK_CUR);
+      int moveCount = rowCount - (uint32_t)indexPosition, i = 0;
+
+      int passAmmount = moveCount / MAX_CHUNK_SIZE, chunk = MAX_CHUNK_SIZE;
+      if (moveCount % MAX_CHUNK_SIZE != 0) passAmmount++;
+
+      fseek(fp, 0, SEEK_END);
+      for (int i = 0; i < passAmmount; i++) {
+        if (i + 1 < passAmmount)
+          chunk = MAX_CHUNK_SIZE;
+        else
+          chunk = moveCount % MAX_CHUNK_SIZE;
+
+        fseek(fp, -(chunk)*INDEX_BLOCK_SIZE, SEEK_CUR);
+        fread(&movable_sector, chunk * INDEX_BLOCK_SIZE, 1, fp);
+
+        fseek(fp, -(chunk - 1) * INDEX_BLOCK_SIZE, SEEK_CUR);
+
+        fwrite(&movable_sector, chunk * INDEX_BLOCK_SIZE, 1, fp);
+        fseek(fp, -((2 + chunk) * INDEX_BLOCK_SIZE), SEEK_CUR);
       }
     }
 

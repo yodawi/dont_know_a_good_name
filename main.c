@@ -42,8 +42,7 @@ int createTable(char *tableName) {
 
   fp = fopen(i_filePath, "wb");
   fwrite(&zero, sizeof(zero), 1, fp);
-  // zero++;
-  // fwrite(&zero, sizeof(zero), 1, fp);
+
   fclose(fp);
 
   return (1);
@@ -116,6 +115,15 @@ int addToTable(char *tableName, char *key, char *value) {
 
   char d_filePath[25 + strlen(tableName) + 5 + 6], i_filePath[26 + strlen(tableName) + 5 + 6];
 
+  /*
+    1 byte for key size
+    4 bytes for value size
+    ? bytes for key
+    ? bytes for value
+    = tota 1 + 4 + ? + ?
+  */
+  uint8_t d_block[1 + 4 + strlen(key) + strlen(value)];
+
   if (strlen(key) > 50) {
     printf("Key cannot excede 50 characters.\n");
     out = 0;
@@ -129,6 +137,42 @@ int addToTable(char *tableName, char *key, char *value) {
   strcpy(i_filePath, "/var/lib/tinydb/i_");
   strcat(i_filePath, tableName);
   strcat(i_filePath, ".tydb");
+
+  uint32_t dataSize = strlen(key) + strlen(value);
+
+  // size of key
+  d_block[0] = (uint8_t)strlen(key);
+
+  // size of value
+  d_block[1] = dataSize << 24;
+  d_block[2] = dataSize << 16;
+  d_block[3] = dataSize << 8;
+  d_block[4] = dataSize;
+
+  // key
+  for (int i = 0; i < strlen(key); i++) {
+    d_block[i + 4] = key[i];
+  }
+
+  // value
+  for (int i = 0; i < strlen(value); i++) {
+    d_block[i + 4 + strlen(key)] = value[i];
+  }
+
+  fp = fopen(d_filePath, "rb+	");
+
+  if (fp == NULL) {
+    printf("Table '%s' does not exist. To create a table use:\n\n    tinydb create NAME\n", tableName);
+    out = 0;
+    goto ret;
+  }
+
+  fseek(fp, 0, SEEK_END);
+  uint32_t d_positoin = ftell(fp);
+
+  fwrite(&d_block, sizeof(d_block), 1, fp);
+
+  fclose(fp);
 
   fp = fopen(i_filePath, "rb+	");
 
@@ -158,10 +202,10 @@ int addToTable(char *tableName, char *key, char *value) {
     k_block[i + strlen(key)] = 0;
   }
 
-  k_block[50] = newRowCount << 24;
-  k_block[51] = newRowCount << 16;
-  k_block[52] = newRowCount << 8;
-  k_block[53] = newRowCount;
+  k_block[50] = d_positoin << 24;
+  k_block[51] = d_positoin << 16;
+  k_block[52] = d_positoin << 8;
+  k_block[53] = d_positoin;
 
   // just insert if first entry
   if (rowCount == 0) {
@@ -213,6 +257,18 @@ int addToTable(char *tableName, char *key, char *value) {
 
     writeRowCount(newRowCount);
   }
+
+  fclose(fp);
+
+  fp = fopen(d_filePath, "rb+	");
+
+  if (fp == NULL) {
+    printf("Table '%s' does not exist. To create a table use:\n\n    tinydb create NAME\n", tableName);
+    out = 0;
+    goto ret;
+  }
+
+  fclose(fp);
 
 ret:
   if (out == 2) {
